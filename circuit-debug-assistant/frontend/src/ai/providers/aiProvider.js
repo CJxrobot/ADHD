@@ -1,5 +1,6 @@
 // ai/providers/aiProvider.js
-// Every provider (gemini.js today, a future claude.js, etc.) must implement:
+// Every provider (backendProvider.js today, a future direct-provider file,
+// etc.) must implement:
 //
 //   interface AIProvider {
 //     sendMessage(systemPrompt: string, history: ChatMessage[]): Promise<{ text: string }>

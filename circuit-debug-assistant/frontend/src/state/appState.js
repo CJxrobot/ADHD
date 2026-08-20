@@ -13,6 +13,7 @@ const state = {
   bom3dRefMap: {},
   bom3dOriginalHtml: null,  // kept for resetBom3d()
   chatHistory: [],          // [{role:'user'|'assistant', text}]
+  toolFormat: 'easyeda',    // 'easyeda' | 'kicad' — reserved; only 'easyeda' is implemented so far
 };
 
 export function getProject() { return state.project; }
@@ -34,3 +35,9 @@ export function getChatHistory() { return state.chatHistory; }
 export function pushChatMessage(msg) { state.chatHistory.push(msg); }
 export function popChatMessage() { return state.chatHistory.pop(); }
 export function resetChatHistory() { state.chatHistory = []; }
+
+// Reserved for future KiCad support (see ui/main.js tool-format toggle).
+// Only 'easyeda' has a real parsing/viewer implementation right now;
+// switching this does not change any parsing behavior yet.
+export function getToolFormat() { return state.toolFormat; }
+export function setToolFormat(format) { state.toolFormat = format; }

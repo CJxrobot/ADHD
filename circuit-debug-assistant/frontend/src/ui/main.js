@@ -9,10 +9,11 @@ import * as bom3dLoader from '../file-processing/interactive-bom/bom3dLoader.js'
 import { CrossProbeManager } from '../cross-probing/crossProbeManager.js';
 import { renderSchematic } from '../visualization/schematicViewer.js';
 import * as measurementService from '../measurements/measurementService.js';
-import { GeminiProvider } from '../ai/providers/gemini.js';
+import { BackendProvider } from '../ai/providers/backendProvider.js';
 import { askAI } from '../ai/aiService.js';
 import * as state from '../state/appState.js';
 import * as render from './render.js';
+import { t, toggleLang, applyTranslations } from '../i18n/i18n.js';
 
 // ---- DOM refs ----
 const els = {
@@ -36,10 +37,12 @@ const els = {
   measNet: document.getElementById('meas-net'),
   measVal: document.getElementById('meas-val'),
   measAddBtn: document.getElementById('meas-add-btn'),
-  apiKey: document.getElementById('api-key'),
   modelName: document.getElementById('model-name'),
   chatInput: document.getElementById('chat-input'),
   chatSendBtn: document.getElementById('chat-send-btn'),
+  langToggleBtn: document.getElementById('lang-toggle-btn'),
+  toolEasyedaBtn: document.getElementById('tool-easyeda-btn'),
+  toolKicadBtn: document.getElementById('tool-kicad-btn'),
 };
 
 // ---- Cross-probe manager wiring ----
@@ -56,10 +59,9 @@ const crossProbe = new CrossProbeManager({
 });
 
 // ---- AI provider ----
-const geminiProvider = new GeminiProvider(
-  () => els.apiKey.value,
-  () => els.modelName.value
-);
+// The Gemini API key lives only on the backend now (backend/.env) — this
+// provider just calls our own server's /api/chat endpoint.
+const aiProvider = new BackendProvider(() => els.modelName.value);
 
 // ---- View switching ----
 function switchView(mode) {
@@ -70,10 +72,42 @@ els.tabAuto.addEventListener('click', () => switchView('auto'));
 els.tabSvg.addEventListener('click', () => switchView('svg'));
 els.tab3d.addEventListener('click', () => switchView('threeD'));
 
+// ---- Language switching ----
+// The status bar's text is set dynamically (not from a static data-i18n
+// element), so we remember which key/vars produced it and re-render it in
+// the new language whenever the user toggles. Everything else on the page
+// is either static markup (handled by applyTranslations()) or transient
+// per-action feedback that simply appears in whichever language is active
+// when that action runs.
+let lastStatus = { key: 'status.notLoaded', vars: undefined, ok: false };
+function setStatus(key, vars, ok) {
+  lastStatus = { key, vars, ok };
+  render.setStatus(t(key, vars), ok);
+}
+
+els.langToggleBtn.addEventListener('click', () => {
+  toggleLang();
+  render.setStatus(t(lastStatus.key, lastStatus.vars), lastStatus.ok);
+});
+
+// ---- Tool format switching (reserved) ----
+// EasyEDA is the only implemented parsing/viewer path today. The KiCad
+// button is reserved for future support and intentionally does not change
+// any parsing behavior yet — clicking it just surfaces a "not implemented"
+// notice via the status bar.
+els.toolEasyedaBtn.addEventListener('click', () => {
+  state.setToolFormat('easyeda');
+  els.toolEasyedaBtn.classList.add('tool-active');
+  els.toolKicadBtn.classList.remove('tool-active');
+});
+els.toolKicadBtn.addEventListener('click', () => {
+  render.setStatus(t('tool.kicadReserved'), false);
+});
+
 // ---- Netlist upload ----
 function parseAndRender(text) {
   if (!text || !text.trim()) {
-    alert('netlist 內容是空的');
+    alert(t('netlist.emptyContent'));
     return;
   }
   const parsed = parseNetlist(text);
@@ -83,15 +117,15 @@ function parseAndRender(text) {
   const compCount = componentCount(project);
   const netCnt = netCount(project);
   if (compCount === 0 && netCnt === 0) {
-    render.setStatus('解析失敗:抓不到任何元件或net,確認匯出格式是 Protel(不是 PADS 或其他格式)', false);
+    setStatus('status.parseFailed', undefined, false);
     return;
   }
-  render.setStatus(`已載入:${compCount} 元件 / ${netCnt} nets`, true);
+  setStatus('status.loaded', { compCount, netCnt }, true);
   render.renderLists(project, crossProbe);
   renderSchematic(els.circuitSvg, project, (ref) => crossProbe.selectComponent(ref, true));
 
   state.resetChatHistory();
-  document.getElementById('chat-log').innerHTML = '<div class="msg sys">netlist 已載入,可以開始提問</div>';
+  document.getElementById('chat-log').innerHTML = `<div class="msg sys">${t('chat.netlistLoadedHint')}</div>`;
 }
 
 els.netlistUpload.addEventListener('change', (event) => {
@@ -100,36 +134,59 @@ els.netlistUpload.addEventListener('change', (event) => {
   const reader = new FileReader();
   reader.onload = (e) => {
     parseAndRender(e.target.result);
-    els.netlistStatus.textContent = `已載入檔案:${file.name}`;
+    els.netlistStatus.textContent = t('netlist.fileLoaded', { name: file.name });
   };
-  reader.onerror = () => { els.netlistStatus.textContent = '檔案讀取失敗'; };
+  reader.onerror = () => { els.netlistStatus.textContent = t('common.readFailed'); };
   reader.readAsText(file);
 });
 
 // ---- SVG upload ----
-els.svgUpload.addEventListener('change', (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const svgRoot = svgParser.mountSvg(els.svgContainer, e.target.result);
-    if (!svgRoot) {
-      els.svgStatus.textContent = '無法解析這個檔案,確認是否為有效的 SVG';
-      return;
-    }
-    switchView('svg');
-    const { bboxByRef, matchedCount } = svgParser.extractRefBBoxes(svgRoot, state.getProject().components);
-    state.setSvgBboxByRef(bboxByRef);
-    els.svgStatus.textContent = `成功定位 ${matchedCount} 個元件`;
-  };
-  reader.readAsText(file);
+// Supports selecting multiple .svg files at once (input has `multiple`).
+// Each file is read, then all of them are mounted together in the order
+// they were selected — mountSvg() stacks every top-level <svg> root it's
+// given (whether that root came from the same file or a different one)
+// into one continuous, scrollable sequence, and treats the whole set as a
+// single logical SVG viewer for highlighting purposes.
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('READ_FAILED'));
+    reader.readAsText(file);
+  });
+}
+
+els.svgUpload.addEventListener('change', async (event) => {
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
+
+  els.svgStatus.textContent = t('svg.reading', { count: files.length });
+  let texts;
+  try {
+    texts = await Promise.all(files.map(readFileAsText));
+  } catch (e) {
+    els.svgStatus.textContent = t('common.readFailed');
+    return;
+  }
+
+  const combinedText = texts.join('\n');
+  const svgRoots = svgParser.mountSvg(els.svgContainer, combinedText);
+  if (!svgRoots || svgRoots.length === 0) {
+    els.svgStatus.textContent = t('svg.parseFailed');
+    return;
+  }
+  switchView('svg');
+  const { bboxByRef, matchedCount } = svgParser.extractRefBBoxes(svgRoots, state.getProject().components);
+  state.setSvgBboxByRef(bboxByRef);
+  const fileNote = files.length > 1 ? t('svg.multiFileNote', { files: files.length, pages: svgRoots.length }) : '';
+  els.svgStatus.textContent = t('svg.matched', { count: matchedCount, note: fileNote });
 });
 
 // ---- Interactive BOM / 3D upload ----
 els.bom3dUpload.addEventListener('change', (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  els.bom3dStatus.textContent = `讀取中:${file.name}...`;
+  els.bom3dStatus.textContent = t('bom3d.reading', { name: file.name });
   const reader = new FileReader();
   reader.onload = (e) => {
     const htmlText = e.target.result;
@@ -143,10 +200,10 @@ els.bom3dUpload.addEventListener('change', (event) => {
     bom3dLoader.subscribeBom3dModelId(els.bom3dFrame);
 
     els.bom3dStatus.innerHTML = '';
-    els.bom3dStatus.append(`已載入:${file.name} — `);
+    els.bom3dStatus.append(t('bom3d.loaded', { name: file.name }));
     const restoreLink = document.createElement('a');
     restoreLink.href = '#';
-    restoreLink.textContent = '還原完整畫面(含BOM清單)';
+    restoreLink.textContent = t('bom3d.restoreLink');
     restoreLink.style.color = 'var(--accent)';
     restoreLink.onclick = (ev) => {
       ev.preventDefault();
@@ -155,28 +212,28 @@ els.bom3dUpload.addEventListener('change', (event) => {
     els.bom3dStatus.append(restoreLink, ' · ');
     const openLink = document.createElement('a');
     openLink.href = '#';
-    openLink.textContent = '在新分頁開啟';
+    openLink.textContent = t('bom3d.openLink');
     openLink.style.color = 'var(--accent)';
     openLink.onclick = (ev) => { ev.preventDefault(); window.open(objectUrl, '_blank'); };
     els.bom3dStatus.append(openLink);
   };
-  reader.onerror = () => { els.bom3dStatus.textContent = '檔案讀取失敗'; };
+  reader.onerror = () => { els.bom3dStatus.textContent = t('common.readFailed'); };
   reader.readAsText(file);
 });
 
 els.bom3dApplyBtn.addEventListener('click', () => {
   const { refMap, count } = bom3dLoader.parseRefMapText(els.bom3dRefmapInput.value);
   state.mergeBom3dRefMap(refMap);
-  els.bom3dRefmapStatus.textContent = `已套用 ${count} 筆對照(累計 ${Object.keys(state.getBom3dRefMap()).length} 筆)`;
+  els.bom3dRefmapStatus.textContent = t('bom3d.applied', { count, total: Object.keys(state.getBom3dRefMap()).length });
 });
 
 els.bom3dAutoBtn.addEventListener('click', async () => {
   const project = state.getProject();
   if (componentCount(project) === 0) {
-    els.bom3dRefmapStatus.textContent = '請先解析 netlist,才知道要找哪些元件編號';
+    els.bom3dRefmapStatus.textContent = t('bom3d.needNetlistFirst');
     return;
   }
-  els.bom3dRefmapStatus.textContent = '開始逐一模擬點擊...';
+  els.bom3dRefmapStatus.textContent = t('bom3d.autoStart');
   try {
     const { refMap, foundCount, candidateCount } = await bom3dLoader.autoBuildBom3dRefMap(
       els.bom3dFrame,
@@ -184,15 +241,18 @@ els.bom3dAutoBtn.addEventListener('click', async () => {
     );
     state.mergeBom3dRefMap(refMap);
     els.bom3dRefmapInput.value = Object.entries(state.getBom3dRefMap()).map(([r, g]) => `${r}: ${g}`).join('\n');
-    els.bom3dRefmapStatus.textContent =
-      `完成 — 自動對應了 ${foundCount}/${candidateCount} 個元件(累計 ${Object.keys(state.getBom3dRefMap()).length} 筆,結果已填入上面文字框,可以自己核對/修改)`;
+    els.bom3dRefmapStatus.textContent = t('bom3d.autoDone', {
+      found: foundCount,
+      candidate: candidateCount,
+      total: Object.keys(state.getBom3dRefMap()).length,
+    });
   } catch (err) {
     const messages = {
-      '3D_NOT_READY': '3D 還沒載入完成,或抓不到內部介面,先確認 3D 分頁已經顯示出來再試',
-      'NO_COMPONENTS': '請先解析 netlist,才知道要找哪些元件編號',
-      'NO_CANDIDATES': '在 3D 畫面裡找不到任何跟元件編號完全相符的文字,可能BOM清單目前是隱藏的 — 先點「還原完整畫面」再試一次',
+      '3D_NOT_READY': t('bom3d.err3dNotReady'),
+      'NO_COMPONENTS': t('bom3d.needNetlistFirst'),
+      'NO_CANDIDATES': t('bom3d.errNoCandidates'),
     };
-    els.bom3dRefmapStatus.textContent = messages[err.message] || `發生錯誤:${err.message}`;
+    els.bom3dRefmapStatus.textContent = messages[err.message] || t('common.errorPrefix', { msg: err.message });
   }
 });
 
@@ -218,21 +278,17 @@ async function sendChat() {
   if (!text) return;
   const project = state.getProject();
   if (componentCount(project) === 0) {
-    render.appendChatMsg('sys', '請先解析 netlist');
-    return;
-  }
-  if (!els.apiKey.value.trim()) {
-    render.appendChatMsg('sys', '請先在上面貼上你的 Gemini API key');
+    render.appendChatMsg('sys', t('chat.needNetlistFirst'));
     return;
   }
   els.chatInput.value = '';
   render.appendChatMsg('user', text);
 
-  const thinkingId = render.appendChatMsg('ai', '思考中...');
+  const thinkingId = render.appendChatMsg('ai', t('chat.thinking'));
 
   try {
     const { replyText, highlightTarget } = await askAI(
-      geminiProvider,
+      aiProvider,
       project,
       state.getChatHistory(),
       text,
@@ -249,10 +305,7 @@ async function sendChat() {
       crossProbe.select(highlightTarget, true);
     }
   } catch (err) {
-    const msg = err.message === 'MISSING_API_KEY'
-      ? '請先在上面貼上你的 Gemini API key'
-      : 'AI API 錯誤: ' + err.message;
-    render.setChatMsgText(thinkingId, msg);
+    render.setChatMsgText(thinkingId, t('chat.apiError', { msg: err.message }));
   }
 }
 els.chatSendBtn.addEventListener('click', sendChat);
@@ -261,4 +314,5 @@ els.chatInput.addEventListener('keydown', (event) => {
 });
 
 // ---- Init ----
+applyTranslations();
 switchView('auto');

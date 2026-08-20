@@ -48,7 +48,7 @@ export class CrossProbeManager {
     const { schematicSvgEl, svgContainer } = this.deps;
     schematicViewer.clearHighlights(schematicSvgEl);
     svgViewer.clearHighlights(svgContainer);
-    bom3dViewer.clearHighlight();
+    bom3dViewer.clearHighlight(this.deps.bom3dFrame);
     this.deps.onListHighlight(null);
   }
 

@@ -2,6 +2,8 @@
 // Presentation only. Calls back into crossProbe.select* on click; never
 // touches pcb-core, parsers, or AI directly.
 
+import { t } from '../i18n/i18n.js';
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -28,7 +30,7 @@ export function renderLists(project, crossProbe) {
   Object.entries(project.nets).sort().forEach(([name, pins]) => {
     const div = document.createElement('div');
     div.className = 'list-item';
-    div.innerHTML = `<span>${escapeHtml(name)}</span><span class="val">${pins.length} pins</span>`;
+    div.innerHTML = `<span>${escapeHtml(name)}</span><span class="val">${t('net.pinsCount', { count: pins.length })}</span>`;
     div.onclick = () => crossProbe.selectNet(name, true);
     netList.appendChild(div);
   });
@@ -45,6 +47,13 @@ export function setListActive(ref) {
 
 export function setStatus(text, ok) {
   const el = document.getElementById('status');
+  // Once JS starts driving this element's text dynamically, it no longer
+  // matches the static "not loaded" label — drop data-i18n so a later
+  // language toggle's applyTranslations() pass doesn't stomp it back to
+  // the default string. (ui/main.js remembers the i18n key/vars that
+  // produced the current status and re-renders it in the new language
+  // itself when the user toggles.)
+  el.removeAttribute('data-i18n');
   el.textContent = text;
   el.classList.toggle('ok', !!ok);
 }

@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<title>Circuit Debug Assistant</title>
+<title>AI-Driven Hardware Doctor</title>
 <style>
   :root{
     --bg:#0d1117;
@@ -31,6 +31,17 @@
   header h1{ font-size:14px; font-weight:600; letter-spacing:.02em; margin:0; color:var(--text);}
   header .status{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
   header .status.ok{ color:var(--accent); }
+  header .spacer{ flex:1; }
+  .tool-switch{ display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+  .tool-switch button{
+    background:transparent; color:var(--text-dim); border:none; border-radius:0;
+    padding:5px 10px; font-size:11px; font-weight:600;
+  }
+  .tool-switch button:hover{ background:var(--panel-2); color:var(--text); }
+  .tool-switch button.tool-active{ background:var(--accent-dim); color:var(--accent); }
+  .tool-switch button.tool-reserved{ opacity:.55; cursor:not-allowed; }
+  .tool-switch button.tool-reserved:hover{ background:transparent; color:var(--text-dim); }
+  #lang-toggle-btn{ padding:5px 10px; font-size:11px; }
 
   .col{ overflow-y:auto; border-right:1px solid var(--border); padding:14px; }
   .col.right{ border-right:none; border-left:1px solid var(--border); display:flex; flex-direction:column; }
@@ -96,51 +107,57 @@
 <body>
 <div id="app">
   <header>
-    <h1>⚡ Circuit Debug Assistant</h1>
-    <span class="status" id="status">尚未載入 netlist</span>
+    <h1 data-i18n="app.title">⚡ AI-Driven Hardware Doctor</h1>
+    <span class="status" id="status" data-i18n="status.notLoaded">尚未載入 netlist</span>
+    <div class="spacer"></div>
+    <div class="tool-switch" id="tool-switch" title="EasyEDA / KiCad">
+      <button type="button" id="tool-easyeda-btn" class="tool-active" data-i18n="tool.easyeda">EasyEDA</button>
+      <button type="button" id="tool-kicad-btn" class="tool-reserved" data-i18n="tool.kicad">KiCad</button>
+    </div>
+    <button type="button" class="secondary" id="lang-toggle-btn" data-i18n="lang.toggle">EN</button>
   </header>
 
   <div class="col" id="left">
-    <h2>1. 匯入 Netlist</h2>
-    <p class="empty-hint">EasyEDA: File → Export → Netlist,格式選 Protel(這個工具目前只支援 Protel 格式,不支援 PADS)</p>
+    <h2 data-i18n="netlist.title">1. 匯入 Netlist</h2>
+    <p class="empty-hint" data-i18n="netlist.hint">EasyEDA: File → Export → Netlist,格式選 Protel(這個工具目前只支援 Protel 格式,不支援 PADS)</p>
     <input type="file" accept=".txt,.net" id="netlist-upload" style="font-size:11px; color:var(--text-dim);">
     <div id="netlist-status" style="font-family:var(--mono); font-size:10.5px; color:var(--text-dim); margin-top:4px;"></div>
 
     <div style="margin-top:14px;">
-      <h2>2. 上傳原始 SVG(選用)</h2>
-      <p class="empty-hint">EasyEDA: File → Export → SVG。上傳後可看到跟你實際畫面一樣的版面,並且精準定位元件。</p>
-      <input type="file" accept=".svg" id="svg-upload" style="font-size:11px; color:var(--text-dim);">
+      <h2 data-i18n="svg.title">2. 上傳原始 SVG(選用)</h2>
+      <p class="empty-hint" data-i18n="svg.hint">EasyEDA: File → Export → SVG。上傳後可看到跟你實際畫面一樣的版面,並且精準定位元件。可一次選取多個 SVG 檔(例如多張分頁),會依選取順序合併成同一個可捲動的畫面。</p>
+      <input type="file" accept=".svg" id="svg-upload" multiple style="font-size:11px; color:var(--text-dim);">
       <div id="svg-status" style="font-family:var(--mono); font-size:10.5px; color:var(--text-dim); margin-top:4px;"></div>
     </div>
 
     <div style="margin-top:14px;">
-      <h2>3. 上傳 3D 預覽(選用)</h2>
-      <p class="empty-hint">EasyEDA Pro: PCB → Export → Interactive BOM。這是 EasyEDA 自己的 3D 引擎,直接嵌入分頁顯示。</p>
+      <h2 data-i18n="bom3d.title">3. 上傳 3D 預覽(選用)</h2>
+      <p class="empty-hint" data-i18n="bom3d.hint">EasyEDA Pro: PCB → Export → Interactive BOM。這是 EasyEDA 自己的 3D 引擎,直接嵌入分頁顯示。</p>
       <input type="file" accept=".html" id="bom3d-upload" style="font-size:11px; color:var(--text-dim);">
       <div id="bom3d-status" style="font-family:var(--mono); font-size:10.5px; color:var(--text-dim); margin-top:4px;"></div>
-      <p class="empty-hint" style="margin-top:8px;">元件對照表(一行一筆,格式:REF: top-default-N)。這份表要靠你點擊BOM清單、看Console裡的 setModelChecked log 手動整理,沒有自動生成的方法。</p>
-      <textarea id="bom3d-refmap-input" placeholder="PMOS: top-default-3
+      <p class="empty-hint" style="margin-top:8px;" data-i18n="bom3d.refmapHint">元件對照表(一行一筆,格式:REF: top-default-N)。這份表要靠你點擊BOM清單、看Console裡的 setModelChecked log 手動整理,沒有自動生成的方法。</p>
+      <textarea id="bom3d-refmap-input" data-i18n-placeholder="bom3d.refmapPlaceholder" placeholder="PMOS: top-default-3
 NMOS: top-default-18" style="width:100%; height:70px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px; font-family:var(--mono); font-size:10.5px;"></textarea>
-      <button class="secondary" id="bom3d-apply-btn" style="margin-top:4px;">套用對照表</button>
-      <button class="secondary" id="bom3d-auto-btn" style="margin-top:4px;">自動建立對照表(實驗性)</button>
+      <button class="secondary" id="bom3d-apply-btn" style="margin-top:4px;" data-i18n="bom3d.applyBtn">套用對照表</button>
+      <button class="secondary" id="bom3d-auto-btn" style="margin-top:4px;" data-i18n="bom3d.autoBtn">自動建立對照表(實驗性)</button>
       <div id="bom3d-refmap-status" style="font-family:var(--mono); font-size:10.5px; color:var(--text-dim); margin-top:4px;"></div>
     </div>
 
     <div style="margin-top:18px;">
-      <h2>元件 (<span id="comp-count">0</span>)</h2>
+      <h2><span data-i18n="comp.title">元件</span> (<span id="comp-count">0</span>)</h2>
       <div id="comp-list"></div>
     </div>
     <div style="margin-top:14px;">
-      <h2>Net (<span id="net-count">0</span>)</h2>
+      <h2><span data-i18n="net.title">Net</span> (<span id="net-count">0</span>)</h2>
       <div id="net-list"></div>
     </div>
   </div>
 
   <div id="canvas-wrap" class="col" style="border-right:1px solid var(--border);">
     <div style="display:flex; gap:6px; margin-bottom:8px;">
-      <button class="secondary" id="tab-auto">自動電路圖</button>
-      <button class="secondary" id="tab-svg">原始 SVG(需先上傳)</button>
-      <button class="secondary" id="tab-3d">3D 預覽(需先上傳)</button>
+      <button class="secondary" id="tab-auto" data-i18n="tabs.auto">自動電路圖</button>
+      <button class="secondary" id="tab-svg" data-i18n="tabs.svg">原始 SVG(需先上傳)</button>
+      <button class="secondary" id="tab-3d" data-i18n="tabs.3d">3D 預覽(需先上傳)</button>
     </div>
     <svg id="circuit-svg" width="1400" height="900"></svg>
     <div id="svg-container" style="display:none;"></div>
@@ -149,28 +166,26 @@ NMOS: top-default-18" style="width:100%; height:70px; background:var(--panel-2);
 
 
   <div class="col right">
-    <h2>量測值(手動輸入,之後可接 BLE 電表)</h2>
+    <h2 data-i18n="meas.title">量測值(手動輸入,之後可接 BLE 電表)</h2>
     <div class="meas-row">
-      <input class="net" id="meas-net" placeholder="net 名稱,例如 +48V">
-      <input class="val" id="meas-val" placeholder="電壓 V">
+      <input class="net" id="meas-net" data-i18n-placeholder="meas.netPlaceholder" placeholder="net 名稱,例如 +48V">
+      <input class="val" id="meas-val" data-i18n-placeholder="meas.valPlaceholder" placeholder="電壓 V">
       <button id="meas-add-btn" style="padding:5px 8px;">+</button>
     </div>
     <div id="meas-log" style="max-height:110px; overflow-y:auto; margin-bottom:8px;"></div>
 
-    <h2>AI Debug 對話</h2>
+    <h2 data-i18n="chat.title">AI Debug 對話</h2>
     <div style="margin-bottom:8px;">
-      <input id="api-key" type="password" placeholder="貼上你的 Gemini API key (AIzaSy...)"
-        style="width:100%; background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 8px; font-size:11px; font-family:var(--mono);">
       <input id="model-name" type="text" value="gemini-3-flash-preview" placeholder="Model (e.g., gemini-3-flash-preview)"
-        style="width:100%; margin-top:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 8px; font-size:11px; font-family:var(--mono);">
-      <p class="empty-hint" style="margin-top:4px;">如果遇到錯誤，請嘗試確保 Model 名稱為 gemini-3-flash-preview。</p>
+        style="width:100%; background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 8px; font-size:11px; font-family:var(--mono);">
+      <p class="empty-hint" style="margin-top:4px;" data-i18n="chat.apiKeyHint">API key 由後端伺服器保管,不需要在這裡輸入。如果遇到錯誤，請嘗試確保 Model 名稱為 gemini-3-flash-preview。</p>
     </div>
     <div id="chat-log">
-      <div class="msg sys">解析 netlist 後即可提問,例如「R2 在哪裡」「+48V 電壓正常嗎」</div>
+      <div class="msg sys" data-i18n="chat.initialHint">解析 netlist 後即可提問,例如「R2 在哪裡」「+48V 電壓正常嗎」</div>
     </div>
     <div id="chat-input-row">
-      <input id="chat-input" placeholder="輸入問題,按 Enter 送出">
-      <button id="chat-send-btn">送出</button>
+      <input id="chat-input" data-i18n-placeholder="chat.inputPlaceholder" placeholder="輸入問題,按 Enter 送出">
+      <button id="chat-send-btn" data-i18n="chat.sendBtn">送出</button>
     </div>
   </div>
 </div>
